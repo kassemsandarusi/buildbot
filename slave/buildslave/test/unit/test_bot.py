@@ -14,9 +14,9 @@
 # Copyright Buildbot Team Members
 
 import mock
+import multiprocessing
 import os
 import shutil
-import multiprocessing
 
 from twisted.internet import defer
 from twisted.internet import reactor
@@ -279,8 +279,8 @@ class TestSlaveBuilder(command.CommandTestMixin, unittest.TestCase):
             return self.sb.callRemote("startCommand", FakeRemote(st),
                                       "13", "shell", dict(
                                           command=['echo', 'hello'],
-                                          workdir='workdir',
-                                      ))
+                                          workdir='workdir'
+                ))
         d.addCallback(do_start)
         d.addCallback(lambda _: st.wait_for_finish())
 
@@ -314,7 +314,7 @@ class TestSlaveBuilder(command.CommandTestMixin, unittest.TestCase):
                                       "13", "shell", dict(
                                           command=['sleep', '10'],
                                           workdir='workdir',
-                                      ))
+                ))
         d.addCallback(do_start)
 
         # wait a jiffy..
@@ -360,7 +360,7 @@ class TestSlaveBuilder(command.CommandTestMixin, unittest.TestCase):
                                       "13", "shell", dict(
                                           command=['sleep', '10'],
                                           workdir='workdir',
-                                      ))
+                ))
         d.addCallback(do_start)
         d.addCallback(lambda _: st.wait_for_finish())
 
