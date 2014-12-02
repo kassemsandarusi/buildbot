@@ -280,7 +280,7 @@ class TestSlaveBuilder(command.CommandTestMixin, unittest.TestCase):
                                       "13", "shell", dict(
                                           command=['echo', 'hello'],
                                           workdir='workdir'
-                ))
+                                      ))
         d.addCallback(do_start)
         d.addCallback(lambda _: st.wait_for_finish())
 
@@ -314,7 +314,7 @@ class TestSlaveBuilder(command.CommandTestMixin, unittest.TestCase):
                                       "13", "shell", dict(
                                           command=['sleep', '10'],
                                           workdir='workdir',
-                ))
+                                      ))
         d.addCallback(do_start)
 
         # wait a jiffy..
@@ -360,7 +360,7 @@ class TestSlaveBuilder(command.CommandTestMixin, unittest.TestCase):
                                       "13", "shell", dict(
                                           command=['sleep', '10'],
                                           workdir='workdir',
-                ))
+                                      ))
         d.addCallback(do_start)
         d.addCallback(lambda _: st.wait_for_finish())
 
