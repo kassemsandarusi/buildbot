@@ -35,7 +35,7 @@ if basedir == '.':
 # directory; do not edit it.
 application = service.Application('buildslave')
 """,
-                    """
+"""
 try:
   from twisted.python.logfile import LogFile
   from twisted.python.log import ILogObserver, FileLogObserver
@@ -46,7 +46,7 @@ except ImportError:
   # probably not yet twisted 8.2.0 and beyond, can't set log yet
   pass
 """,
-                    """
+"""
 buildmaster_host = %(host)r
 port = %(port)d
 slavename = %(name)r
