@@ -267,6 +267,15 @@ builds
         Get a single build, in the format described above, specified by builder and number, rather than build id.
         Returns ``None`` if there is no such build.
 
+    .. py:method:: getPrevSuccessfulBuild(builderid, number, ssBuild)
+
+        :param integer builderid: builder to get builds for
+        :param integer number: the current build number. Previous build will be taken from this number
+        :param list ssBuild: the list of sourcestamps for the current build number
+        :returns: None or a build dictionnary
+
+        Returns the last successful build from the current build number with the same repository/repository/codebase 
+
     .. py:method:: getBuilds(builderid=None, buildrequestid=None)
 
         :param integer builderid: builder to get builds for
@@ -308,15 +317,25 @@ builds
 
             This update is done unconditionally, even if the build is already finished.
 
-    .. py:method:: finishBuildsFromMaster(masterid, results)
+    .. py:method:: getBuildProperties(buildid)
 
-        :param integer buildid: master id
-        :param integer results: build result
+        :param buildid: build ID
+        :returns: dictionary mapping property name to ``value, source``, via Deferred
+
+        Return the properties for a build, in the same format they were given to :py:meth:`addBuild`.
+
+        Note that this method does not distinguish a non-existent build from a build with no properties, and returns ``{}`` in either case.
+
+    .. py:method:: setBuildProperty(buildid, name, value, source)
+
+        :param integer buildid: build ID
+        :param string name: Name of the property to set
+        :param value: Value of the property
+        :param string source: Source of the Property to set
         :returns: Deferred
 
-        Mark the unfinished build from a given master as finished, with ``complete_at``
-        set to the current time.
-        This is part of the housekeeping done when a master is lost.
+        Set a build property.
+        If no property with that name existed in that build, a new property will be created.
 
 steps
 ~~~~~
@@ -345,6 +364,7 @@ steps
     * ``state_string`` (short string describing the step's state)
     * ``results`` (results of this step; see :ref:`Build-Result-Codes`)
     * ``urls`` (list of URLs produced by this step. Each urls is stored as a dictionary with keys `name` and `url`)
+    * ``hidden`` (true if the step should be hidden in status displays)
 
     .. py:method:: getStep(stepid=None, buildid=None, number=None, name=None)
 
@@ -388,10 +408,11 @@ steps
 
         Update the state string for the given step.
 
-    .. py:method:: finishStep(stepid, results)
+    .. py:method:: finishStep(stepid, results, hidden)
 
         :param integer stepid: step ID
         :param integer results: step result
+        :param bool hidden: true if the step should be hidden
         :returns: Deferred
 
         Mark the given step as finished, with ``complete_at`` set to the current time.
@@ -735,6 +756,7 @@ changes
     has the following keys:
 
     * ``changeid`` (the ID of this change)
+    * ``parent_changeids`` (list of ID; change's parents) 
     * ``author`` (unicode; the author of the change)
     * ``files`` (list of unicode; source-code filenames changed)
     * ``comments`` (unicode; user comments)
@@ -754,6 +776,19 @@ changes
     * ``repository`` (unicode string; repository where this change occurred)
     * ``project`` (unicode string; user-defined project to which this change
       corresponds)
+
+    .. py:method:: getParentChangeIds(branch, repository, project, codebase)
+
+        :param branch: the branch of the change
+        :type branch: unicode string 
+        :param repository: the repository in which this change took place
+        :type repository: unicode string
+        :param project: the project this change is a part of
+        :type project: unicode string
+        :param codebase:
+        :type codebase: unicode string
+
+        return the last changeID which matches the repository/project/codebase
 
     .. py:method:: addChange(author=None, files=None, comments=None, is_dir=0, links=None, revision=None, when_timestamp=None, branch=None, category=None, revlink='', properties={}, repository='', project='', uid=None)
 
@@ -852,6 +887,20 @@ changes
         Get the most-recently-assigned changeid, or ``None`` if there are no
         changes at all.
 
+
+    .. py:method:: getChangesForBuild(buildid)
+
+        :param buildid: ID of the build
+        :returns: list of dictionaries via Deferred
+
+        Get the "blame" list of changes for a build.
+
+    .. py:method:: getChangeFromSSid(sourcestampid)
+
+        :param sourcestampid: ID of the sourcestampid
+        :returns: chdict via Deferred
+
+        returns the change dictionnary related to the sourcestamp ID.
 
 changesources
 ~~~~~~~~~~~~~
@@ -1121,6 +1170,13 @@ sourcestamps
         Get all sourcestamps in the database.
         You probably don't want to do this!
         This method will be extended to allow appropriate filtering.
+
+    .. py:method:: getSourceStampsForBuild(buildid)
+
+        :param buildid: build ID
+        :returns: list of ssdict, via Deferred
+
+        Get sourcestamps related to a build.
 
 state
 ~~~~~

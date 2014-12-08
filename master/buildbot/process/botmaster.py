@@ -14,8 +14,6 @@
 # Copyright Buildbot Team Members
 
 
-from buildbot import config
-from buildbot import interfaces
 from buildbot import locks
 from buildbot import util
 from buildbot.process import metrics
@@ -25,10 +23,9 @@ from buildbot.util import service
 from twisted.internet import defer
 from twisted.internet import reactor
 from twisted.python import log
-from twisted.python import reflect
 
 
-class BotMaster(config.ReconfigurableServiceMixin, service.AsyncMultiService):
+class BotMaster(service.ReconfigurableServiceMixin, service.AsyncMultiService):
 
     """This is the master-side service which manages remote buildbot slaves.
     It provides them with BuildSlaves, and distributes build requests to
@@ -46,12 +43,6 @@ class BotMaster(config.ReconfigurableServiceMixin, service.AsyncMultiService):
         # builders maps Builder names to instances of bb.p.builder.Builder,
         # which is the master-side object that defines and controls a build.
 
-        # self.slaves contains a ready BuildSlave instance for each
-        # potential buildslave, i.e. all the ones listed in the config file.
-        # If the slave is connected, self.slaves[slavename].slave will
-        # contain a RemoteReference to their Bot instance. If it is not
-        # connected, that attribute will hold None.
-        self.slaves = {}  # maps slavename to BuildSlave
         self.watchers = {}
 
         # self.locks holds the real Lock instances
@@ -164,74 +155,20 @@ class BotMaster(config.ReconfigurableServiceMixin, service.AsyncMultiService):
         yield service.AsyncMultiService.startService(self)
 
     @defer.inlineCallbacks
-    def reconfigService(self, new_config):
-        timer = metrics.Timer("BotMaster.reconfigService")
+    def reconfigServiceWithBuildbotConfig(self, new_config):
+        timer = metrics.Timer("BotMaster.reconfigServiceWithBuildbotConfig")
         timer.start()
-
-        # reconfigure slaves
-        yield self.reconfigServiceSlaves(new_config)
 
         # reconfigure builders
         yield self.reconfigServiceBuilders(new_config)
 
         # call up
-        yield config.ReconfigurableServiceMixin.reconfigService(self,
-                                                                new_config)
+        yield service.ReconfigurableServiceMixin.reconfigServiceWithBuildbotConfig(self,
+                                                                                   new_config)
 
         # try to start a build for every builder; this is necessary at master
         # startup, and a good idea in any other case
         self.maybeStartBuildsForAllBuilders()
-
-        timer.stop()
-
-    @defer.inlineCallbacks
-    def reconfigServiceSlaves(self, new_config):
-
-        timer = metrics.Timer("BotMaster.reconfigServiceSlaves")
-        timer.start()
-
-        # arrange slaves by name
-        old_by_name = dict([(s.slavename, s)
-                            for s in list(self)
-                            if interfaces.IBuildSlave.providedBy(s)])
-        old_set = set(old_by_name.iterkeys())
-        new_by_name = dict([(s.slavename, s)
-                            for s in new_config.slaves])
-        new_set = set(new_by_name.iterkeys())
-
-        # calculate new slaves, by name, and removed slaves
-        removed_names, added_names = util.diffSets(old_set, new_set)
-
-        # find any slaves for which the fully qualified class name has
-        # changed, and treat those as an add and remove
-        for n in old_set & new_set:
-            old = old_by_name[n]
-            new = new_by_name[n]
-            # detect changed class name
-            if reflect.qual(old.__class__) != reflect.qual(new.__class__):
-                removed_names.add(n)
-                added_names.add(n)
-
-        if removed_names or added_names:
-            log.msg("adding %d new slaves, removing %d" %
-                    (len(added_names), len(removed_names)))
-
-            for n in removed_names:
-                slave = old_by_name[n]
-
-                del self.slaves[n]
-                slave.master = None
-                slave.botmaster = None
-
-                yield slave.disownServiceParent()
-
-            for n in added_names:
-                slave = new_by_name[n]
-                yield slave.setServiceParent(self)
-                self.slaves[n] = slave
-
-        metrics.MetricCountEvent.log("num_slaves",
-                                     len(self.slaves), absolute=True)
 
         timer.stop()
 

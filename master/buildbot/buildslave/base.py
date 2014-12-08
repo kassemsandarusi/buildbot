@@ -36,7 +36,7 @@ from buildbot.util import service
 from buildbot.util.eventual import eventually
 
 
-class AbstractBuildSlave(config.ReconfigurableServiceMixin,
+class AbstractBuildSlave(service.ReconfigurableServiceMixin,
                          service.AsyncMultiService, object):
 
     """This is the master-side representative for a remote buildbot slave.
@@ -82,6 +82,7 @@ class AbstractBuildSlave(config.ReconfigurableServiceMixin,
 
         # these are set when the service is started
         self.botmaster = None
+        self.manager = None
         self.master = None
         self.buildslaveid = None
 
@@ -191,8 +192,10 @@ class AbstractBuildSlave(config.ReconfigurableServiceMixin,
 
     def setServiceParent(self, parent):
         # botmaster needs to set before setServiceParent which calls startService
-        self.botmaster = parent
+
+        self.manager = parent
         self.master = parent.master
+        self.botmaster = parent.master.botmaster
         return service.AsyncMultiService.setServiceParent(self, parent)
 
     @defer.inlineCallbacks
@@ -207,7 +210,7 @@ class AbstractBuildSlave(config.ReconfigurableServiceMixin,
         yield service.AsyncMultiService.startService(self)
 
     @defer.inlineCallbacks
-    def reconfigService(self, new_config):
+    def reconfigServiceWithBuildbotConfig(self, new_config):
         # Given a new BuildSlave, configure this one identically.  Because
         # BuildSlave objects are remotely referenced, we can't replace them
         # without disconnecting the slave, yet there's no reason to do that.
@@ -247,8 +250,8 @@ class AbstractBuildSlave(config.ReconfigurableServiceMixin,
         # which is why the reconfig_priority is set low in this class.
         yield self.updateSlave()
 
-        yield config.ReconfigurableServiceMixin.reconfigService(self,
-                                                                new_config)
+        yield service.ReconfigurableServiceMixin.reconfigServiceWithBuildbotConfig(self,
+                                                                                   new_config)
 
     @defer.inlineCallbacks
     def stopService(self):

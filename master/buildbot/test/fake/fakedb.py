@@ -217,6 +217,7 @@ class Change(Row):
         codebase=u'',
         project=u'proj',
         sourcestampid=92,
+        parent_changeids=None,
     )
 
     lists = ('files', 'uids')
@@ -462,6 +463,19 @@ class Build(Row):
     required_columns = ('buildrequestid', 'masterid', 'buildslaveid')
 
 
+class BuildProperty(Row):
+    table = "build_properties"
+    defaults = dict(
+        buildid=None,
+        name='prop',
+        value=42,
+        source='fakedb'
+    )
+
+    foreignKeys = ('buildid',)
+    required_columns = ('buildid',)
+
+
 class Step(Row):
     table = "steps"
 
@@ -474,7 +488,8 @@ class Step(Row):
         complete_at=None,
         state_string='',
         results=None,
-        urls_json='[]')
+        urls_json='[]',
+        hidden=False)
 
     id_column = 'id'
     foreignKeys = ('buildid',)
@@ -746,8 +761,11 @@ class FakeChangesComponent(FakeDBComponent):
             revision=revision, branch=branch, repository=repository,
             codebase=codebase, project=project, _reactor=_reactor)
 
+        parent_changeids = yield self.getParentChangeIds(branch, repository, project, codebase)
+
         self.changes[changeid] = ch = dict(
             changeid=changeid,
+            parent_changeids=parent_changeids,
             author=author,
             comments=comments,
             revision=revision,
@@ -772,6 +790,16 @@ class FakeChangesComponent(FakeDBComponent):
         if self.changes:
             return defer.succeed(max(self.changes.iterkeys()))
         return defer.succeed(None)
+
+    def getParentChangeIds(self, branch, repository, project, codebase):
+        if self.changes:
+            for changeid, change in self.changes.iteritems():
+                if (change['branch'] == branch and
+                        change['repository'] == repository and
+                        change['project'] == project and
+                        change['codebase'] == codebase):
+                    return defer.succeed([change['changeid']])
+        return defer.succeed([])
 
     def getChange(self, key, no_cache=False):
         try:
@@ -800,9 +828,15 @@ class FakeChangesComponent(FakeDBComponent):
     def getChangesCount(self):
         return len(self.changes)
 
+    def getChangesForBuild(self, buildid):
+        pass
+
     def _chdict(self, row):
         chdict = row.copy()
         del chdict['uids']
+        if chdict['parent_changeids'] is None:
+            chdict['parent_changeids'] = []
+
         chdict['when_timestamp'] = _mkdt(chdict['when_timestamp'])
         return chdict
 
@@ -813,6 +847,15 @@ class FakeChangesComponent(FakeDBComponent):
         del row_only['files']
         del row_only['properties']
         del row_only['uids']
+        if not row_only['parent_changeids']:
+            # Convert [] to None
+            # None is the value stored in the DB.
+            # We need this kind of conversion, because for the moment we only support
+            # 1 parent for a change.
+            # When we will support multiple parent for change, then we will have a
+            # table parent_changes with at least 2 col: "changeid", "parent_changeid"
+            # And the col 'parent_changeids' of the table changes will be dropped
+            row_only['parent_changeids'] = None
         self.t.assertEqual(row_only, row.values)
 
     def assertChangeUsers(self, changeid, expectedUids):
@@ -1078,6 +1121,14 @@ class FakeSourceStampsComponent(FakeDBComponent):
             return ssdict
         else:
             return None
+
+    @defer.inlineCallbacks
+    def getSourceStampsForBuild(self, buildid):
+        build = yield self.db.builds.getBuild(buildid)
+        breq = yield self.db.buildrequests.getBuildRequest(build['buildrequestid'])
+        bset = yield self.db.buildsets.getBuildset(breq['buildsetid'])
+
+        defer.returnValue([(yield self.getSourceStamp(ssid)) for ssid in bset['sourcestamps']])
 
 
 class FakeBuildsetsComponent(FakeDBComponent):
@@ -1670,7 +1721,13 @@ class FakeBuildsComponent(FakeDBComponent):
     def insertTestData(self, rows):
         for row in rows:
             if isinstance(row, Build):
-                self.builds[row.id] = row.values.copy()
+                build = self.builds[row.id] = row.values.copy()
+                build['properties'] = {}
+
+        for row in rows:
+            if isinstance(row, BuildProperty):
+                assert row.buildid in self.builds
+                self.builds[row.buildid]['properties'][row.name] = (row.value, row.source)
 
     # component methods
 
@@ -1748,12 +1805,15 @@ class FakeBuildsComponent(FakeDBComponent):
             b['results'] = results
         return defer.succeed(None)
 
-    def finishBuildsFromMaster(self, masterid, results, _reactor=reactor):
-        now = _reactor.seconds()
-        for (id, row) in self.builds.items():
-            if row['masterid'] == masterid and row['results'] == None:
-                row['complete_at'] = now
-                row['results'] = results
+    def getBuildProperties(self, bid):
+        if bid in self.builds:
+            return defer.succeed(self.builds[bid]['properties'])
+        else:
+            return defer.succeed({})
+
+    def setBuildProperty(self, bid, name, value, source):
+        assert bid in self.builds
+        self.builds[bid]['properties'][name] = (value, source)
         return defer.succeed(None)
 
 
@@ -1785,7 +1845,8 @@ class FakeStepsComponent(FakeDBComponent):
             complete_at=_mkdt(row['complete_at']),
             state_string=row['state_string'],
             results=row['results'],
-            urls=json.loads(row['urls_json']))
+            urls=json.loads(row['urls_json']),
+            hidden=bool(row['hidden']))
 
     def getStep(self, stepid=None, buildid=None, number=None, name=None):
         if stepid is not None:
@@ -1846,7 +1907,8 @@ class FakeStepsComponent(FakeDBComponent):
             'complete_at': None,
             'results': None,
             'state_string': state_string,
-            'urls_json': '[]'}
+            'urls_json': '[]',
+            'hidden': False}
 
         return defer.succeed((id, number, name))
 
@@ -1878,12 +1940,13 @@ class FakeStepsComponent(FakeDBComponent):
             b['urls_json'] = json.dumps(urls)
         return defer.succeed(None)
 
-    def finishStep(self, stepid, results, _reactor=reactor):
+    def finishStep(self, stepid, results, hidden, _reactor=reactor):
         now = _reactor.seconds()
         b = self.steps.get(stepid)
         if b:
             b['complete_at'] = now
             b['results'] = results
+            b['hidden'] = True if hidden else False
         return defer.succeed(None)
 
 

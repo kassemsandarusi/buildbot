@@ -13,12 +13,11 @@
 #
 # Copyright Buildbot Team Members
 
-from buildbot import config
 from buildbot.util import lru
 from buildbot.util import service
 
 
-class CacheManager(config.ReconfigurableServiceMixin, service.AsyncService):
+class CacheManager(service.ReconfigurableServiceMixin, service.AsyncService):
 
     """
     A manager for a collection of caches, each for different types of objects
@@ -59,14 +58,14 @@ class CacheManager(config.ReconfigurableServiceMixin, service.AsyncService):
             c = self._caches[cache_name] = lru.AsyncLRUCache(miss_fn, max_size)
             return c
 
-    def reconfigService(self, new_config):
+    def reconfigServiceWithBuildbotConfig(self, new_config):
         self.config = new_config.caches
         for name, cache in self._caches.iteritems():
             cache.set_max_size(new_config.caches.get(name,
                                                      self.DEFAULT_CACHE_SIZE))
 
-        return config.ReconfigurableServiceMixin.reconfigService(self,
-                                                                 new_config)
+        return service.ReconfigurableServiceMixin.reconfigServiceWithBuildbotConfig(self,
+                                                                                    new_config)
 
     def get_metrics(self):
         return dict([

@@ -18,7 +18,6 @@ from __future__ import with_statement
 import os
 import urllib
 
-from buildbot import config
 from buildbot import interfaces
 from buildbot import util
 from buildbot.changes import changes
@@ -35,13 +34,14 @@ from twisted.python import log
 from zope.interface import implements
 
 
-class Status(config.ReconfigurableServiceMixin, service.AsyncMultiService):
+class Status(service.ReconfigurableServiceMixin, service.AsyncMultiService):
     implements(interfaces.IStatus)
 
     def __init__(self, master):
         service.AsyncMultiService.__init__(self)
         self.master = master
         self.botmaster = master.botmaster
+        self.buildslaves = master.buildslaves
         self.basedir = master.basedir
         self.watchers = []
         # No default limit to the log size
@@ -72,7 +72,7 @@ class Status(config.ReconfigurableServiceMixin, service.AsyncMultiService):
         yield service.AsyncMultiService.startService(self)
 
     @defer.inlineCallbacks
-    def reconfigService(self, new_config):
+    def reconfigServiceWithBuildbotConfig(self, new_config):
         # remove the old listeners, then add the new
         for sr in list(self):
             yield defer.maybeDeferred(lambda:
@@ -92,8 +92,8 @@ class Status(config.ReconfigurableServiceMixin, service.AsyncMultiService):
             yield sr.setServiceParent(self)
 
         # reconfig any newly-added change sources, as well as existing
-        yield config.ReconfigurableServiceMixin.reconfigService(self,
-                                                                new_config)
+        yield service.ReconfigurableServiceMixin.reconfigServiceWithBuildbotConfig(self,
+                                                                                   new_config)
 
     def stopService(self):
         if self._buildset_complete_consumer:
@@ -245,10 +245,10 @@ class Status(config.ReconfigurableServiceMixin, service.AsyncMultiService):
         return self.botmaster.builders[name].builder_status
 
     def getSlaveNames(self):
-        return self.botmaster.slaves.keys()
+        return self.buildslaves.slaves.keys()
 
     def getSlave(self, slavename):
-        return self.botmaster.slaves[slavename].slave_status
+        return self.buildslaves.slaves[slavename].slave_status
 
     def getBuildSets(self):
         d = self.master.db.buildsets.getBuildsets(complete=False)

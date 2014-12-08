@@ -15,9 +15,11 @@
 
 import sqlalchemy as sa
 
-from buildbot.db import NULL
 from buildbot.db import base
 from buildbot.util import epoch2datetime
+from buildbot.util import json
+
+from twisted.internet import defer
 from twisted.internet import reactor
 
 
@@ -44,6 +46,51 @@ class BuildsConnectorComponent(base.DBConnectorComponent):
         return self._getBuild(
             (self.db.model.builds.c.builderid == builderid)
             & (self.db.model.builds.c.number == number))
+
+    def _getRecentBuilds(self, whereclause, offset=0, limit=1):
+        def thd(conn):
+            tbl = self.db.model.builds
+
+            q = tbl.select(whereclause=whereclause,
+                           order_by=[sa.desc(tbl.c.complete_at)],
+                           offset=offset,
+                           limit=limit)
+
+            res = conn.execute(q)
+            return list([self._builddictFromRow(row)
+                         for row in res.fetchall()])
+
+        return self.db.pool.do(thd)
+
+    @defer.inlineCallbacks
+    def getPrevSuccessfulBuild(self, builderid, number, ssBuild):
+        gssfb = self.master.db.sourcestamps.getSourceStampsForBuild
+        rv = None
+        tbl = self.db.model.builds
+        offset = 0
+        matchssBuild = [{"repository": ss['repository'],
+                         "branch": ss['branch'],
+                         "codebase": ss['codebase']} for ss in ssBuild]
+        while True:
+            # Get some recent successfull builds on the same builder
+            prevBuilds = yield self._getRecentBuilds(whereclause=((tbl.c.builderid == builderid) &
+                                                                  (tbl.c.number < number) &
+                                                                  (tbl.c.results == 0)),
+                                                     offset=offset,
+                                                     limit=10)
+            if not prevBuilds:
+                break
+            for prevBuild in prevBuilds:
+                prevssBuild = [{"repository": ss['repository'],
+                                "branch": ss['branch'],
+                                "codebase": ss['codebase']} for ss in (yield gssfb(prevBuild['id']))]
+                if sorted(prevssBuild) == sorted(matchssBuild):
+                    # A successful build with the same repository/branch/codebase was found !
+                    rv = prevBuild
+
+            offset += 10
+
+        defer.returnValue(rv)
 
     def getBuilds(self, builderid=None, buildrequestid=None):
         def thd(conn):
@@ -104,16 +151,40 @@ class BuildsConnectorComponent(base.DBConnectorComponent):
                          results=results)
         return self.db.pool.do(thd)
 
-    def finishBuildsFromMaster(self, masterid, results, _reactor=reactor):
+    def getBuildProperties(self, bid):
         def thd(conn):
-            tbl = self.db.model.builds
-            q = tbl.update()
-            q = q.where(tbl.c.masterid == masterid)
-            q = q.where(tbl.c.results == NULL)
+            bp_tbl = self.db.model.build_properties
+            q = sa.select(
+                [bp_tbl.c.name, bp_tbl.c.value, bp_tbl.c.source],
+                whereclause=(bp_tbl.c.buildid == bid))
+            props = []
+            for row in conn.execute(q):
+                prop = (json.loads(row.value), row.source)
+                props.append((row.name, prop))
+            return dict(props)
+        return self.db.pool.do(thd)
 
-            conn.execute(q,
-                         complete_at=_reactor.seconds(),
-                         results=results)
+    def setBuildProperty(self, bid, name, value, source):
+        """ A kind of create_or_update, that's between one or two queries per
+        call """
+        def thd(conn):
+            bp_tbl = self.db.model.build_properties
+            self.checkLength(bp_tbl.c.name, name)
+            self.checkLength(bp_tbl.c.source, source)
+            whereclause = sa.and_(bp_tbl.c.buildid == bid,
+                                  bp_tbl.c.name == name)
+            q = sa.select(
+                [bp_tbl.c.value, bp_tbl.c.source],
+                whereclause=whereclause)
+            prop = conn.execute(q).fetchone()
+            value_js = json.dumps(value)
+            if prop is None:
+                conn.execute(bp_tbl.insert(),
+                             dict(buildid=bid, name=name, value=value_js,
+                                  source=source))
+            elif (prop.value != value_js) or (prop.source != source):
+                conn.execute(bp_tbl.update(whereclause=whereclause),
+                             dict(value=value_js, source=source))
         return self.db.pool.do(thd)
 
     def _builddictFromRow(self, row):

@@ -49,7 +49,6 @@ from buildbot.process.builder import BuilderControl
 from buildbot.process.users.manager import UserManagerManager
 from buildbot.schedulers.manager import SchedulerManager
 from buildbot.status.master import Status
-from buildbot.status.results import RETRY
 from buildbot.util import ascii2unicode
 from buildbot.util import check_functional_environment
 from buildbot.util import datetime2epoch
@@ -67,7 +66,7 @@ class LogRotation(object):
         self.maxRotatedFiles = 10
 
 
-class BuildMaster(config.ReconfigurableServiceMixin, service.AsyncMultiService):
+class BuildMaster(service.ReconfigurableServiceMixin, service.AsyncMultiService):
 
     # frequency with which to reclaim running builds; this should be set to
     # something fairly long, to avoid undue database load
@@ -250,14 +249,19 @@ class BuildMaster(config.ReconfigurableServiceMixin, service.AsyncMultiService):
             self.masterid = yield self.db.masters.findMasterId(
                 name=self.name)
 
-            yield self.doMasterHouseKeeping(self.masterid)
+            # mark this master as stopped, in case it crashed before
+            yield self.data.updates.masterStopped(name=self.name,
+                                                  masterid=self.masterid)
+
+            for serviceFactory in self.config.services.values():
+                yield serviceFactory.setServiceParent(self)
 
             # call the parent method
             yield service.AsyncMultiService.startService(self)
 
             # give all services a chance to load the new configuration, rather
             # than the base configuration
-            yield self.reconfigService(self.config)
+            yield self.reconfigServiceWithBuildbotConfig(self.config)
 
             # mark the master as active now that mq is running
             yield self.data.updates.masterActive(
@@ -281,19 +285,6 @@ class BuildMaster(config.ReconfigurableServiceMixin, service.AsyncMultiService):
 
         log.msg("BuildMaster is stopped")
         self._master_initialized = False
-
-    @defer.inlineCallbacks
-    def doMasterHouseKeeping(self, masterid):
-        # House keeping method, when a master is stopped, disappear or
-        # starts (if it has crashed before)
-        # unclaim the unfinished buildrequest, and finish the unfinished builds
-        buildrequests = yield self.db.buildrequests.getBuildRequests(
-            complete=False, claimed=masterid)
-
-        yield self.db.buildrequests.unclaimBuildRequests(
-            brids=[br['buildrequestid'] for br in buildrequests])
-
-        yield self.db.builds.finishBuildsFromMaster(masterid, RETRY)
 
     def reconfig(self):
         # this method wraps doConfig, ensuring it is only ever called once at
@@ -339,11 +330,21 @@ class BuildMaster(config.ReconfigurableServiceMixin, service.AsyncMultiService):
         changes_made = False
         failed = False
         try:
+            old_config = self.config
             new_config = config.MasterConfig.loadConfig(self.basedir,
                                                         self.configFileName)
             changes_made = True
             self.config = new_config
-            yield self.reconfigService(new_config)
+            for name in old_config.services:
+                if name not in new_config.services:
+                    serv = self.namedServices[name]
+                    yield serv.disownServiceParent()
+
+            for name in new_config.services:
+                if name not in old_config.services:
+                    yield new_config.services[name].setServiceParent(self)
+
+            yield self.reconfigServiceWithBuildbotConfig(new_config)
 
         except config.ConfigErrors, e:
             for msg in e.errors:
@@ -363,7 +364,7 @@ class BuildMaster(config.ReconfigurableServiceMixin, service.AsyncMultiService):
         else:
             log.msg("configuration update complete")
 
-    def reconfigService(self, new_config):
+    def reconfigServiceWithBuildbotConfig(self, new_config):
         if self.configured_db_url is None:
             self.configured_db_url = new_config.db['db_url']
         elif (self.configured_db_url != new_config.db['db_url']):
@@ -376,8 +377,8 @@ class BuildMaster(config.ReconfigurableServiceMixin, service.AsyncMultiService):
                 "Cannot change c['mq']['type'] after the master has started",
             ])
 
-        return config.ReconfigurableServiceMixin.reconfigService(self,
-                                                                 new_config)
+        return service.ReconfigurableServiceMixin.reconfigServiceWithBuildbotConfig(self,
+                                                                                    new_config)
 
     # informational methods
     def allSchedulers(self):

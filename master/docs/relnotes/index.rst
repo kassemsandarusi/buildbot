@@ -59,8 +59,10 @@ Minor Python Packages
 Features
 ~~~~~~~~
 
-..
-    TODO: talk about big new Nine features
+Buildbot-0.9.0 introduces the :ref:`Data_API`, a consistent and scalable method for accessing and updating the state of the Buildbot system.
+This API replaces the existing, ill-defined Status API, which has been removed.
+All Buildbot code that interacted with the Status API (a substantial portion!) has been rewritten to use the Data API.
+Individual features and improvements to the Data API are not described on this page.
 
 * Both the P4 source step and P4 change source support ticket-based authentication.
 * Buildbot now supports plugins.
@@ -91,6 +93,10 @@ Features
 * Add new :bb:step:`Cppcheck` step.
 
 * Add a new :doc:`Docker latent BuildSlave </manual/cfg-buildslaves-docker>`.
+
+* Add a new configuration for creating custom services in out-of-tree CI systems or plugins. See :py:class:`buildbot.util.service.BuildbotService`
+
+* Add ``try_ssh`` configuration file setting and ``--ssh`` command line option for the try tool to specify the command to use for connecting to the build master.
 
 Fixes
 ~~~~~
@@ -163,6 +169,11 @@ Fixes
   BitBucket dialect.
 
 * The :bb:step:`PyLint` step has been updated to understand newer output.
+
+* Fixed SVN master-side source step: if a SVN operation fails, the repository end up in a situation when a manual intervention is required.
+  Now if SVN reports such a situation during initial check, the checkout will be clobbered.
+
+* The build properties are now stored in the database in the ``build_properties`` table.
 
 Deprecations, Removals, and Non-Compatible Changes
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -254,8 +265,15 @@ Changes and Removals
 
 * The undocumented ``path`` parameter of the :bb:step:`MasterShellCommand` buildstep has been renamed ``workdir`` for better consistency with the other steps.
 
+* The name and source of a Property have to be unicode or ascii string.
+
+* Property values must be serializable in JSON.
+
 Changes for Developers
 ~~~~~~~~~~~~~~~~~~~~~~
+
+* Botmaster no longer service parent for buildslaves. Service parent functionality has been transferred to BuildslaveManager.
+  It should be noted Botmaster no longer has a ``slaves`` field as it was moved to BuildslaveManager.
 
 * The sourcestamp DB connector now returns a ``patchid`` field.
 

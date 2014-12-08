@@ -13,7 +13,6 @@
 #
 # Copyright Buildbot Team Members
 
-from buildbot import config
 from buildbot import interfaces
 from buildbot import util
 from buildbot.process import metrics
@@ -23,7 +22,7 @@ from twisted.python import log
 from zope.interface import implements
 
 
-class ChangeManager(config.ReconfigurableServiceMixin, service.AsyncMultiService):
+class ChangeManager(service.ReconfigurableServiceMixin, service.AsyncMultiService):
 
     """
     This is the master-side service which receives file change notifications
@@ -44,8 +43,8 @@ class ChangeManager(config.ReconfigurableServiceMixin, service.AsyncMultiService
         self.master = master
 
     @defer.inlineCallbacks
-    def reconfigService(self, new_config):
-        timer = metrics.Timer("ChangeManager.reconfigService")
+    def reconfigServiceWithBuildbotConfig(self, new_config):
+        timer = metrics.Timer("ChangeManager.reconfigServiceWithBuildbotConfig")
         timer.start()
 
         removed, added = util.diffSets(
@@ -70,7 +69,7 @@ class ChangeManager(config.ReconfigurableServiceMixin, service.AsyncMultiService
         metrics.MetricCountEvent.log("num_sources", num_sources, absolute=True)
 
         # reconfig any newly-added change sources, as well as existing
-        yield config.ReconfigurableServiceMixin.reconfigService(self,
-                                                                new_config)
+        yield service.ReconfigurableServiceMixin.reconfigServiceWithBuildbotConfig(self,
+                                                                                   new_config)
 
         timer.stop()

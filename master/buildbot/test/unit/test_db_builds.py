@@ -109,9 +109,14 @@ class Tests(interfaces.InterfaceTests):
         def finishBuild(self, buildid, results):
             pass
 
-    def test_signature_finishBuildsFromMaster(self):
-        @self.assertArgSpecMatches(self.db.builds.finishBuildsFromMaster)
-        def finishBuildsFromMaster(self, masterid, results):
+    def test_signature_getBuildProperties(self):
+        @self.assertArgSpecMatches(self.db.builds.getBuildProperties)
+        def getBuildProperties(self, bid):
+            pass
+
+    def test_signature_setBuildProperty(self):
+        @self.assertArgSpecMatches(self.db.builds.setBuildProperty)
+        def setBuildProperty(self, bid, name, value, source):
             pass
 
     # method tests
@@ -230,28 +235,39 @@ class Tests(interfaces.InterfaceTests):
                                      results=7))
 
     @defer.inlineCallbacks
-    def test_finishBuildsFromMaster(self):
-        clock = task.Clock()
-        clock.advance(TIME4)
-        yield self.insertTestData(self.backgroundData + self.threeBuilds + [
-            fakedb.Build(
-                id=54, buildrequestid=40, number=50, masterid=89,
-                builderid=77, buildslaveid=13, state_string="test",
-                started_at=TIME1)
-        ])
-        yield self.db.builds.finishBuildsFromMaster(masterid=88, results=7, _reactor=clock)
-        bdict = yield self.db.builds.getBuild(50)
-        validation.verifyDbDict(self, 'builddict', bdict)
-        self.assertEqual(bdict, dict(id=50, number=5, buildrequestid=42,
-                                     masterid=88, builderid=77, buildslaveid=13,
-                                     started_at=epoch2datetime(TIME1),
-                                     complete_at=epoch2datetime(TIME4),
-                                     state_string=u'test',
-                                     results=7))
-        for _id, results in [(50, 7), (51, 7), (52, 5), (54, None)]:
-            bdict = yield self.db.builds.getBuild(_id)
-            validation.verifyDbDict(self, 'builddict', bdict)
-            self.assertEqual(bdict['results'], results)
+    def testgetBuildPropertiesEmpty(self):
+        yield self.insertTestData(self.backgroundData + self.threeBuilds)
+        for buildid in (50, 51, 52):
+            props = yield self.db.builds.getBuildProperties(buildid)
+            self.assertEquals(0, len(props))
+
+    @defer.inlineCallbacks
+    def testsetandgetProperties(self):
+        yield self.insertTestData(self.backgroundData + self.threeBuilds)
+        yield self.db.builds.setBuildProperty(50, 'prop', 42, 'test')
+        props = yield self.db.builds.getBuildProperties(50)
+        self.assertEqual(props, {'prop': (42, 'test')})
+
+    @defer.inlineCallbacks
+    def testsetgetsetProperties(self):
+        yield self.insertTestData(self.backgroundData + self.threeBuilds)
+        props = yield self.db.builds.getBuildProperties(50)
+        self.assertEqual(props, {})
+        yield self.db.builds.setBuildProperty(50, 'prop', 42, 'test')
+        props = yield self.db.builds.getBuildProperties(50)
+        self.assertEqual(props, {'prop': (42, 'test')})
+        # set a new value
+        yield self.db.builds.setBuildProperty(50, 'prop', 45, 'test')
+        props = yield self.db.builds.getBuildProperties(50)
+        self.assertEqual(props, {'prop': (45, 'test')})
+        # set a new source
+        yield self.db.builds.setBuildProperty(50, 'prop', 45, 'test_source')
+        props = yield self.db.builds.getBuildProperties(50)
+        self.assertEqual(props, {'prop': (45, 'test_source')})
+        # set the same
+        yield self.db.builds.setBuildProperty(50, 'prop', 45, 'test_source')
+        props = yield self.db.builds.getBuildProperties(50)
+        self.assertEqual(props, {'prop': (45, 'test_source')})
 
 
 class RealTests(Tests):
@@ -303,7 +319,7 @@ class TestRealDB(unittest.TestCase,
     def setUp(self):
         d = self.setUpConnectorComponent(
             table_names=['builds', 'builders', 'masters', 'buildrequests',
-                         'buildsets', 'buildslaves'])
+                         'buildsets', 'buildslaves', 'build_properties'])
 
         @d.addCallback
         def finish_setup(_):

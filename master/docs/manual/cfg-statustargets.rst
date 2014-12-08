@@ -28,7 +28,7 @@ To add status targets, you just append more objects to this list::
                                             {"channel": "#example2",
                                              "password": "somesecretpassword"}]))
 
-Most status delivery objects take a ``categories=`` argument, which can contain a list of `category` names: in this case, it will only show status for Builders that are in one of the named categories.
+Most status delivery objects take a ``tags=`` argument, which can contain a list of tag names: in this case, it will only show status for Builders that contains the named tags.
 
 .. note:: Implementation Note
 
@@ -286,13 +286,13 @@ MailNotifier arguments
     (list of strings).
     A list of builder names for which mail should be sent.
     Defaults to ``None`` (send mail for all builds).
-    Use either builders or categories, but not both.
+    Use either builders or tags, but not both.
 
-``categories``
+``tags``
     (list of strings).
-    A list of category names to serve status information for.
-    Defaults to ``None`` (all categories).
-    Use either builders or categories, but not both.
+    A list of tag names to serve status information for.
+    Defaults to ``None`` (all tags).
+    Use either builders or tags, but not both.
 
 ``addLogs``
     (boolean).
@@ -490,21 +490,89 @@ It can also be asked to announce builds as they occur, or be told to shut up.
                      })
     c['status'].append(irc)
 
-Take a look at the docstring for :class:`words.IRC` for more details on configuring this service.
-Note that the ``useSSL`` option requires `PyOpenSSL`_.
-The ``password`` argument, if provided, will be sent to Nickserv to claim the nickname: some IRC servers will not allow clients to send private messages until they have logged in with a password.
-We can also specify a different ``port`` number.
-Default value is 6667.
+The following parameters are accepted by this class:
+
+``host``
+    (mandatory)
+    The IRC server adress to connect to.
+
+``nick``
+    (mandatory)
+    The name this bot will use on the IRC server.
+
+``channels``
+    (mandatory)
+    This is a list of channels to join on the IRC server.
+    Each channel can be a string (e.g. ``#buildbot``), or a dictionnary ``{'channel': '#buildbot', 'password': 'secret'}`` if each channel requires a different password.
+    A global password can be set with the ``password`` parameter.
+
+``pm_to_nicks``
+    (optional)
+    This is a list of person to contact on the IRC server.
+
+``port``
+    (optional, default to 6667)
+    The port to connect to on the IRC server.
+
+``allowForce``
+    (optional, disabled by default)
+    This allow user to force builds via this bot.
+
+``tags``
+    (optional)
+    When set, this bot will only communicate about builders containing those tags.
+
+``password``
+    (optional)
+    The global password used to register the bot to the IRC server.
+    If provided, it will be sent to Nickserv to claim the nickname: some IRC servers will not allow clients to send private messages until they have logged in with a password.
+
+``notify_events``
+    (optional)
+    A dictionnary of events to be notified on the IRC channels.
+    This parameter can be changed during run-time by sending the ``notify`` command to the bot.
+
+``noticeOnChannel``
+    (optional, disabled by default)
+    Whether to respond privately to request from users, or to respond on the channel the request was made.
+
+``showBlameList``
+    (optional, disabled by default)
+    Whether or not to display the blamelist for failed builds.
+
+``useRevisions``
+    (optional, disabled by default)
+    Whether or not to display the revision leading to the build the messages are about.
+
+``useSSL``
+    (optional, disabled by default)
+    Whether or not to use SSL when connecting to the IRC server.
+    Note that this option requires `PyOpenSSL`_.
+
+``lostDelay``
+    (optional)
+    Delay to wait before reconnecting to the server when the connection has been lost.
+
+``failedDelay``
+    (optional)
+    Delay to wait before reconnecting to the IRC server when the connection failed.
+
+``useColors``
+    (optional, enabled by default)
+    The bot can add color to some of its messages.
+    You might turn it off by setting this parameter to ``False``.
+
+``allowShutdown``
+    (optional, disabled by default)
+    This allow users to shutdown the master.
+
 
 To use the service, you address messages at the buildbot, either normally (``botnickname: status``) or with private messages (``/msg botnickname status``).
 The buildbot will respond in kind.
 
-The bot will add color to some of its messages.
-This is enabled by default, you might turn it off with ``useColors=False`` argument to words.IRC().
 
 If you issue a command that is currently not available, the buildbot will respond with an error message.
 If the ``noticeOnChannel=True`` option was used, error messages will be sent as channel notices instead of messaging.
-The default value is ``noticeOnChannel=False``.
 
 Some of the commands currently available:
 
@@ -597,7 +665,7 @@ If the ``allowForce=True`` option was used, some additional commands will be ava
     *REASON* will be added to the build status to explain why it was stopped.
     You might use this if you committed a bug, corrected it right away, and don't want to wait for the first build (which is destined to fail) to complete before starting the second (hopefully fixed) build.
 
-If the `categories` is set to a category of builders (see the categories option in :ref:`Builder-Configuration`) changes related to only that category of builders will be sent to the channel.
+If the `tags` is set (see the tags option in :ref:`Builder-Configuration`) changes related to only builders belonging to those tags of builders will be sent to the channel.
 
 If the `useRevisions` option is set to `True`, the IRC bot will send status messages that replace the build number with a list of revisions that are contained in that build.
 So instead of seeing `build #253 of ...`, you would see something like `build containing revisions [a87b2c4]`.
@@ -1008,13 +1076,5 @@ Note that as before, not using ``change_hook_auth`` can expose you to security r
 .. note::
 
     Web hooks are only available for local Gitorious installations, since this feature is not offered as part of Gitorious.org yet.
-
-.. [#]
-
-   Apparently this is the same way http://buildd.debian.org displays build status
-
-.. [#]
-
-   It may even be possible to provide SSL access by using a specification like ``"ssl:12345:privateKey=mykey.pen:certKey=cert.pem"``, but this is completely untested
 
 .. _PyOpenSSL: http://pyopenssl.sourceforge.net/

@@ -107,9 +107,12 @@ class RealBuildSlaveItfc(unittest.TestCase, BuildSlaveInterfaceTests):
     def callAttached(self):
         self.master = fakemaster.make_master(testcase=self, wantData=True)
         self.botmaster = botmaster.FakeBotMaster(self.master)
+        self.buildslaves = bslavemanager.FakeBuildslaveManager(self.master)
         self.master.botmaster = self.botmaster
+        self.master.buildslaves = self.buildslaves
         self.sl.master = self.master
         self.sl.botmaster = self.botmaster
+        self.sl.manager = self.buildslaves
         self.conn = fakeprotocol.FakeConnection(self.master, self.sl)
         return self.sl.attached(self.conn)
 
@@ -131,7 +134,7 @@ class TestAbstractBuildSlave(unittest.TestCase):
         self.master = fakemaster.make_master(wantDb=True, wantData=True,
                                              testcase=self)
         self.botmaster = botmaster.FakeBotMaster(self.master)
-
+        self.buildslaves = bslavemanager.FakeBuildslaveManager(self.master)
         self.clock = task.Clock()
         self.patch(reactor, 'callLater', self.clock.callLater)
         self.patch(reactor, 'seconds', self.clock.seconds)
@@ -140,6 +143,7 @@ class TestAbstractBuildSlave(unittest.TestCase):
         slave = ConcreteBuildSlave(name, password, **kwargs)
         slave.master = self.master
         slave.botmaster = self.botmaster
+        slave.manager = self.buildslaves
         if attached:
             slave.conn = fakeprotocol.FakeConnection(self.master, slave)
         return slave
@@ -181,7 +185,7 @@ class TestAbstractBuildSlave(unittest.TestCase):
                                              notify_on_missing=['a@b.com', 13]))
 
     @defer.inlineCallbacks
-    def do_test_reconfigService(self, old, new, existingRegistration=True):
+    def do_test_reconfigServiceWithBuildbotConfig(self, old, new, existingRegistration=True):
         old.master = self.master
         if existingRegistration:
             old.registration = bslavemanager.FakeBuildslaveRegistration(old)
@@ -191,7 +195,7 @@ class TestAbstractBuildSlave(unittest.TestCase):
         new_config = mock.Mock()
         new_config.slaves = [new]
 
-        yield old.reconfigService(new_config)
+        yield old.reconfigServiceWithBuildbotConfig(new_config)
 
     @defer.inlineCallbacks
     def test_reconfigService_attrs(self):
@@ -208,7 +212,7 @@ class TestAbstractBuildSlave(unittest.TestCase):
 
         old.updateSlave = mock.Mock(side_effect=lambda: defer.succeed(None))
 
-        yield self.do_test_reconfigService(old, new)
+        yield self.do_test_reconfigServiceWithBuildbotConfig(old, new)
 
         self.assertEqual(old.max_builds, 3)
         self.assertEqual(old.notify_on_missing, ['her@me.com'])
@@ -221,14 +225,14 @@ class TestAbstractBuildSlave(unittest.TestCase):
     def test_reconfigService_has_properties(self):
         old = self.createBuildslave(name="bot", password="pass")
 
-        yield self.do_test_reconfigService(old, old)
+        yield self.do_test_reconfigServiceWithBuildbotConfig(old, old)
         self.assertTrue(old.properties.getProperty('slavename'), 'bot')
 
     @defer.inlineCallbacks
     def test_reconfigService_initial_registration(self):
         old = self.createBuildslave('bot', 'pass')
-        yield self.do_test_reconfigService(old, old,
-                                           existingRegistration=False)
+        yield self.do_test_reconfigServiceWithBuildbotConfig(old, old,
+                                                             existingRegistration=False)
         self.assertIn('bot', self.master.buildslaves.registrations)
         self.assertEqual(old.registration.updates, ['bot'])
 
@@ -241,7 +245,7 @@ class TestAbstractBuildSlave(unittest.TestCase):
         config.protocols = {'pb': {'port': 'tcp:1234'}}
         config.slaves = [slave]
 
-        yield slave.reconfigService(config)
+        yield slave.reconfigServiceWithBuildbotConfig(config)
 
         reg = slave.registration
 
@@ -291,10 +295,15 @@ class TestAbstractBuildSlave(unittest.TestCase):
     def test_setServiceParent_started(self):
         master = self.master
         bm = botmaster.FakeBotMaster(master)
+        bsmanager = bslavemanager.FakeBuildslaveManager(master)
+        master.botmaster = bm
+        master.buildslaves = bsmanager
         bm.startService()
+        bsmanager.startService()
         bs = ConcreteBuildSlave('bot', 'pass')
-        bs.setServiceParent(bm)
-        self.assertEqual(bs.botmaster, bm)
+        bs.setServiceParent(bsmanager)
+        self.assertEqual(bs.manager, bsmanager)
+        self.assertEqual(bs.parent, bsmanager)
         self.assertEqual(bs.master, master)
 
     def test_setServiceParent_masterLocks(self):
@@ -303,10 +312,14 @@ class TestAbstractBuildSlave(unittest.TestCase):
         """
         master = self.master
         bm = botmaster.FakeBotMaster(master)
+        bsmanager = bslavemanager.FakeBuildslaveManager(master)
+        master.botmaster = bm
+        master.buildslaves = bsmanager
         bm.startService()
+        bsmanager.startService()
         lock = locks.MasterLock('masterlock')
         bs = ConcreteBuildSlave('bot', 'pass', locks=[lock.access("counting")])
-        bs.setServiceParent(bm)
+        bs.setServiceParent(bsmanager)
 
     def test_setServiceParent_slaveLocks(self):
         """
@@ -314,10 +327,14 @@ class TestAbstractBuildSlave(unittest.TestCase):
         """
         master = self.master
         bm = botmaster.FakeBotMaster(master)
+        bsmanager = bslavemanager.FakeBuildslaveManager(master)
+        master.botmaster = bm
+        master.buildslaves = bsmanager
         bm.startService()
+        bsmanager.startService()
         lock = locks.SlaveLock('lock')
         bs = ConcreteBuildSlave('bot', 'pass', locks=[lock.access("counting")])
-        bs.setServiceParent(bm)
+        bs.setServiceParent(bsmanager)
 
     @defer.inlineCallbacks
     def test_startService_getSlaveInfo_empty(self):

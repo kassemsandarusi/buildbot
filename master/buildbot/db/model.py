@@ -20,6 +20,8 @@ import sqlalchemy as sa
 from migrate import exceptions
 
 from buildbot.db import base
+from buildbot.db.migrate_utils import should_import_changes
+from buildbot.db.migrate_utils import test_unicode
 from buildbot.db.types.json import JsonObject
 from twisted.python import log
 from twisted.python import util
@@ -96,6 +98,16 @@ class Model(base.DBConnectorComponent):
 
     # builds
 
+    # This table contains the build properties
+    build_properties = sa.Table('build_properties', metadata,
+                                sa.Column('buildid', sa.Integer, sa.ForeignKey('builds.id'),
+                                          nullable=False),
+                                sa.Column('name', sa.String(256), nullable=False),
+                                # JSON encoded value
+                                sa.Column('value', sa.Text, nullable=False),
+                                sa.Column('source', sa.String(256), nullable=False),
+                                )
+
     # This table contains basic information about each build.
     builds = sa.Table('builds', metadata,
                       sa.Column('id', sa.Integer, primary_key=True),
@@ -107,8 +119,8 @@ class Model(base.DBConnectorComponent):
                       sa.Column('buildrequestid', sa.Integer, sa.ForeignKey('buildrequests.id'),
                                 nullable=False),
                       # slave which performed this build
-                      # TODO: ForeignKey to buildslaves table, named buildslaveid
-                      # TODO: keep nullable to support slave-free builds
+                      # TODO: ForeignKey to buildslaves table, named buildslaveid (#3088)
+                      # TODO: keep nullable to support slave-free builds (#3088)
                       sa.Column('buildslaveid', sa.Integer),
                       # master which controlled this build
                       sa.Column('masterid', sa.Integer, sa.ForeignKey('masters.id'),
@@ -132,6 +144,7 @@ class Model(base.DBConnectorComponent):
                      sa.Column('state_string', sa.Text, nullable=False, server_default=''),
                      sa.Column('results', sa.Integer),
                      sa.Column('urls_json', sa.Text, nullable=False),
+                     sa.Column('hidden', sa.SmallInteger, nullable=False, server_default='0'),
                      )
 
     # logs
@@ -326,7 +339,12 @@ class Model(base.DBConnectorComponent):
 
                        # the sourcestamp this change brought the codebase to
                        sa.Column('sourcestampid', sa.Integer,
-                                 sa.ForeignKey('sourcestamps.id'))
+                                 sa.ForeignKey('sourcestamps.id')),
+
+                       # The parent of the change
+                       # Even if for the moment there's only 1 parent for a change, we use plural here because
+                       # somedays a change will have multiple parent. This way we don't need to change the API
+                       sa.Column('parent_changeids', sa.Integer, sa.ForeignKey('changes.changeid'), nullable=True),
                        )
 
     # sourcestamps
@@ -563,6 +581,7 @@ class Model(base.DBConnectorComponent):
     sa.Index('buildrequests_buildsetid', buildrequests.c.buildsetid)
     sa.Index('buildrequests_builderid', buildrequests.c.builderid)
     sa.Index('buildrequests_complete', buildrequests.c.complete)
+    sa.Index('build_properties_buildid', build_properties.c.buildid)
     sa.Index('builds_buildrequestid', builds.c.buildrequestid)
     sa.Index('buildsets_complete', buildsets.c.complete)
     sa.Index('buildsets_submitted_at', buildsets.c.submitted_at)
@@ -664,6 +683,12 @@ class Model(base.DBConnectorComponent):
         ('buildsets',
             dict(unique=False, column_names=['parent_buildid'],
                  name='parent_buildid')),
+        ('builders_tags',
+            dict(unique=False, column_names=['tagid'],
+                 name='tagid')),
+        ('changes',
+            dict(unique=False, column_names=['parent_changeids'],
+                 name='parent_changeids')),
     ]
 
     #
@@ -786,11 +811,22 @@ class Model(base.DBConnectorComponent):
                 # and, finally, upgrade using migrate
                 upgrade(engine)
 
-            # otherwise, this db is uncontrolled, so we just version control it
-            # and update it.
-            else:
+            # if we detect a pre-db installation, we run the migration engine
+            # to convert pickles
+            elif should_import_changes(engine):
                 version_control(engine)
                 upgrade(engine)
+            # otherwise, this db is new, so we dont bother using the migration engine
+            # and just create the tables, and put the version directly to latest
+            else:
+                # do some tests before getting started
+                test_unicode(engine)
+
+                log.msg("Initializing empty database")
+                Model.metadata.create_all(engine)
+                repo = migrate.versioning.repository.Repository(self.repo_path)
+
+                version_control(engine, repo.latest)
 
         # import the prerequisite classes for pickles
         check_sqlalchemy_migrate_version()

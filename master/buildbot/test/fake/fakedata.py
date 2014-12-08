@@ -104,13 +104,13 @@ class FakeUpdates(object):
         self.testcase.assertIsInstance(masterid, int)
         if masterid:
             self.testcase.assertEqual(masterid, 1)
-        self.masterActive = True
+        self.thisMasterActive = True
         return defer.succeed(None)
 
     def masterStopped(self, name, masterid):
         self.testcase.assertIsInstance(name, unicode)
         self.testcase.assertEqual(masterid, 1)
-        self.masterActive = False
+        self.thisMasterActive = False
         return defer.succeed(None)
 
     def expireMasters(self):
@@ -278,6 +278,19 @@ class FakeUpdates(object):
                               validation.IntValidator())
         return defer.succeed(None)
 
+    def setBuildProperty(self, buildid, name, value, source):
+        validation.verifyType(self.testcase, 'buildid', buildid,
+                              validation.IntValidator())
+        validation.verifyType(self.testcase, 'name', name,
+                              validation.StringValidator())
+        try:
+            json.dumps(value)
+        except (TypeError, ValueError):
+            self.testcase.fail("Value for %s is not JSON-able" % name)
+        validation.verifyType(self.testcase, 'source', source,
+                              validation.StringValidator())
+        return defer.succeed(None)
+
     def newStep(self, buildid, name):
         validation.verifyType(self.testcase, 'buildid', buildid,
                               validation.IntValidator())
@@ -308,11 +321,13 @@ class FakeUpdates(object):
         self.stepStateString[stepid] = state_string
         return defer.succeed(None)
 
-    def finishStep(self, stepid, results):
+    def finishStep(self, stepid, results, hidden):
         validation.verifyType(self.testcase, 'stepid', stepid,
                               validation.IntValidator())
         validation.verifyType(self.testcase, 'results', results,
                               validation.IntValidator())
+        validation.verifyType(self.testcase, 'hidden', hidden,
+                              validation.BooleanValidator())
         return defer.succeed(None)
 
     def newLog(self, stepid, name, type):

@@ -15,7 +15,6 @@
 
 import os
 
-from buildbot import config
 from buildbot.plugins.db import get_plugins
 from buildbot.util import service
 from buildbot.www import auth
@@ -30,7 +29,7 @@ from twisted.python import log
 from twisted.web import server
 
 
-class WWWService(config.ReconfigurableServiceMixin, service.AsyncMultiService):
+class WWWService(service.ReconfigurableServiceMixin, service.AsyncMultiService):
 
     def __init__(self, master):
         service.AsyncMultiService.__init__(self)
@@ -44,15 +43,12 @@ class WWWService(config.ReconfigurableServiceMixin, service.AsyncMultiService):
         # load the apps early, in case something goes wrong in Python land
         self.apps = get_plugins('www', None, load_now=True)
 
-        if 'base' not in self.apps:
-            raise RuntimeError("could not find buildbot-www; is it installed?")
-
     @property
     def auth(self):
         return self.master.config.www['auth']
 
     @defer.inlineCallbacks
-    def reconfigService(self, new_config):
+    def reconfigServiceWithBuildbotConfig(self, new_config):
         www = new_config.www
 
         need_new_site = False
@@ -105,8 +101,11 @@ class WWWService(config.ReconfigurableServiceMixin, service.AsyncMultiService):
 
                 yield self.port_service.setServiceParent(self)
 
-        yield config.ReconfigurableServiceMixin.reconfigService(self,
-                                                                new_config)
+        if not self.port_service:
+            log.msg("No web server configured on this master")
+
+        yield service.ReconfigurableServiceMixin.reconfigServiceWithBuildbotConfig(self,
+                                                                                   new_config)
 
     def getPortnum(self):
         # for tests, when the configured port is 0 and the kernel selects a
@@ -116,11 +115,15 @@ class WWWService(config.ReconfigurableServiceMixin, service.AsyncMultiService):
 
     def setupSite(self, new_config):
         self.reconfigurableResources = []
+
+        # we're going to need at least the the base plugin (buildbot-www)
+        if 'base' not in self.apps:
+            raise RuntimeError("could not find buildbot-www; is it installed?")
+
         root = self.apps.get('base').resource
         for key, plugin in new_config.www.get('plugins', {}).items():
             if key not in self.apps:
                 raise RuntimeError("could not find plugin %s; is it installed?" % (key,))
-            print "putChild", key, self.apps.get(key).resource
             root.putChild(key, self.apps.get(key).resource)
 
         # /
@@ -153,6 +156,7 @@ class WWWService(config.ReconfigurableServiceMixin, service.AsyncMultiService):
         maxRotatedFiles = either(new_config.www.get('maxRotatedFiles'), self.master.log_rotation.maxRotatedFiles)
 
         class RotateLogSite(server.Site):
+
             """ A Site that logs to a separate file: http.log, and rotate its logs """
 
             def _openLogFile(self, path):

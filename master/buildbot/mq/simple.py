@@ -15,14 +15,14 @@
 
 import pprint
 
-from buildbot import config
 from buildbot.mq import base
+from buildbot.util import service
 from buildbot.util import tuplematch
 from twisted.internet import defer
 from twisted.python import log
 
 
-class SimpleMQ(config.ReconfigurableServiceMixin, base.MQBase):
+class SimpleMQ(service.ReconfigurableServiceMixin, base.MQBase):
 
     def __init__(self, master):
         base.MQBase.__init__(self, master)
@@ -30,10 +30,10 @@ class SimpleMQ(config.ReconfigurableServiceMixin, base.MQBase):
         self.persistent_qrefs = {}
         self.debug = False
 
-    def reconfigService(self, new_config):
+    def reconfigServiceWithBuildbotConfig(self, new_config):
         self.debug = new_config.mq.get('debug', False)
-        return config.ReconfigurableServiceMixin.reconfigService(self,
-                                                                 new_config)
+        return service.ReconfigurableServiceMixin.reconfigServiceWithBuildbotConfig(self,
+                                                                                    new_config)
 
     def produce(self, routingKey, data):
         if self.debug:

@@ -15,7 +15,6 @@
 
 import collections
 import re
-import warnings
 import weakref
 
 from buildbot import config
@@ -100,8 +99,7 @@ class Properties(util.ComparableMixin):
     def asDict(self):
         """Return the properties as a simple key:value dictionary,
         properly unicoded"""
-        return dict((util.ascii2unicode(k), (v, util.ascii2unicode(s)))
-                    for k, (v, s) in self.properties.iteritems())
+        return dict((k, (v, s)) for k, (v, s) in self.properties.iteritems())
 
     def __repr__(self):
         return ('Properties(**' +
@@ -136,13 +134,9 @@ class Properties(util.ComparableMixin):
     has_key = hasProperty
 
     def setProperty(self, name, value, source, runtime=False):
-        try:
-            json.dumps(value)
-        except TypeError:
-            warnings.warn(
-                "Non jsonable properties are not explicitly supported and" +
-                "will be explicitly disallowed in a future version.",
-                DeprecationWarning, stacklevel=2)
+        name = util.ascii2unicode(name)
+        json.dumps(value)  # Let the exception propagate ...
+        source = util.ascii2unicode(source)
 
         self.properties[name] = (value, source)
         if runtime:

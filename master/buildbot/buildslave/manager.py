@@ -13,12 +13,15 @@
 #
 # Copyright Buildbot Team Members
 
-from buildbot import config
+from buildbot import interfaces
+from buildbot import util
 from buildbot.buildslave.protocols import pb as bbpb
+from buildbot.process import metrics
 from buildbot.util import misc
-from twisted.application import service
+from buildbot.util import service
 from twisted.internet import defer
 from twisted.python import log
+from twisted.python import reflect
 from twisted.python.failure import Failure
 
 
@@ -53,14 +56,15 @@ class BuildslaveRegistration(object):
         return self.pbReg.getPort()
 
 
-class BuildslaveManager(config.ReconfigurableServiceMixin,
-                        service.MultiService):
+class BuildslaveManager(service.ReconfigurableServiceMixin,
+                        service.AsyncMultiService):
 
     name = "buildslaves"
     PING_TIMEOUT = 10
+    reconfig_priority = 127
 
     def __init__(self, master):
-        service.MultiService.__init__(self)
+        service.AsyncMultiService.__init__(self)
         self.setName('buildslaves')
         self.master = master
 
@@ -73,15 +77,71 @@ class BuildslaveManager(config.ReconfigurableServiceMixin,
         # connection objects keyed by buildslave name
         self.connections = {}
 
-    @defer.inlineCallbacks
-    def reconfigService(self, new_config):
+        # self.slaves contains a ready BuildSlave instance for each
+        # potential buildslave, i.e. all the ones listed in the config file.
+        # If the slave is connected, self.slaves[slavename].slave will
+        # contain a RemoteReference to their Bot instance. If it is not
+        # connected, that attribute will hold None.
+        self.slaves = {}  # maps slavename to BuildSlave
 
-        # TODO: make buildslaves child services to this object instead of
-        # BotMaster, so they no longer need to register
+    @defer.inlineCallbacks
+    def reconfigServiceWithBuildbotConfig(self, new_config):
+
+        yield self.reconfigServiceSlaves(new_config)
 
         # reconfig any newly-added change sources, as well as existing
-        yield config.ReconfigurableServiceMixin.reconfigService(self,
-                                                                new_config)
+        yield service.ReconfigurableServiceMixin.reconfigServiceWithBuildbotConfig(self,
+                                                                           new_config)
+
+    @defer.inlineCallbacks
+    def reconfigServiceSlaves(self, new_config):
+
+        timer = metrics.Timer("BuildSlaveManager.reconfigServiceSlaves")
+        timer.start()
+
+        # arrange slaves by name
+        old_by_name = dict([(s.slavename, s)
+                            for s in list(self)
+                            if interfaces.IBuildSlave.providedBy(s)])
+        old_set = set(old_by_name.iterkeys())
+        new_by_name = dict([(s.slavename, s)
+                            for s in new_config.slaves])
+        new_set = set(new_by_name.iterkeys())
+
+        # calculate new slaves, by name, and removed slaves
+        removed_names, added_names = util.diffSets(old_set, new_set)
+
+        # find any slaves for which the fully qualified class name has
+        # changed, and treat those as an add and remove
+        for n in old_set & new_set:
+            old = old_by_name[n]
+            new = new_by_name[n]
+            # detect changed class name
+            if reflect.qual(old.__class__) != reflect.qual(new.__class__):
+                removed_names.add(n)
+                added_names.add(n)
+
+        if removed_names or added_names:
+            log.msg("adding %d new slaves, removing %d" %
+                    (len(added_names), len(removed_names)))
+
+            for n in removed_names:
+                slave = old_by_name[n]
+
+                del self.slaves[n]
+                slave.master = None
+
+                yield slave.disownServiceParent()
+
+            for n in added_names:
+                slave = new_by_name[n]
+                yield slave.setServiceParent(self)
+                self.slaves[n] = slave
+
+        metrics.MetricCountEvent.log("num_slaves",
+                                     len(self.slaves), absolute=True)
+
+        timer.stop()
 
     def getBuildslaveByName(self, buildslaveName):
         return self.registrations[buildslaveName].buildslave
@@ -126,8 +186,7 @@ class BuildslaveManager(config.ReconfigurableServiceMixin,
             log.msg("Got slaveinfo from '%s'" % buildslaveName)
         except Exception, e:
             log.msg("Failed to communicate with slave '%s'\n"
-                    "%s" % (buildslaveName, e)
-                    )
+                    "%s" % (buildslaveName, e))
             defer.returnValue(False)
 
         conn.info = info
